@@ -1,6 +1,6 @@
 #!/bin/bash
-# Double-click to launch kloa daemon in a new Terminal window.
+# Double-click to launch assistant daemon in a new Terminal window.
 # Sources config.sh first so credentials are loaded.
 cd "$(dirname "$0")"
 source config.sh
-python3 kloa_daemon.py
+python3 assistant_daemon.py

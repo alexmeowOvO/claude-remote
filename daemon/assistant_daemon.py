@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 """
-kloa_daemon.py — Telegram remote control for your Mac (+ optional Claude Code)
-Polls the kloa Telegram bot for incoming messages and executes them.
+assistant_daemon.py — Telegram remote control for your Mac (+ optional Claude Code)
+Polls the assistant Telegram bot for incoming messages and executes them.
 
 Credentials are read from environment variables:
-  KLOA_TOKEN      — Telegram bot token (from @BotFather)
-  KLOA_CHAT_ID    — your numeric Telegram chat ID
-  KLOA_SECRET     — (optional) shared secret required to run shell commands
-  KLOA_CLAUDE_MODE — set to "1" to forward unrecognised messages to Claude Code
+  ASSISTANT_TOKEN      — Telegram bot token (from @BotFather)
+  ASSISTANT_CHAT_ID    — your numeric Telegram chat ID
+  ASSISTANT_SECRET     — (optional) shared secret required to run shell commands
+  ASSISTANT_CLAUDE_MODE — set to "1" to forward unrecognised messages to Claude Code
 
 Built-in commands (type exactly):
   screenshot          — take a screenshot and send it back
@@ -19,7 +19,7 @@ Built-in commands (type exactly):
   status              — show daemon uptime and stats
   help                — show available commands
 
-Start:  python3 daemon/kloa_daemon.py
+Start:  python3 daemon/assistant_daemon.py
 Stop:   Ctrl+C  (or kill the process)
 """
 
@@ -36,24 +36,24 @@ import shlex
 
 # ── Configuration ──────────────────────────────────────────────────────────
 
-TOKEN = os.environ.get("KLOA_TOKEN", "").strip()
-CHAT_ID_STR = os.environ.get("KLOA_CHAT_ID", "").strip()
-SECRET = os.environ.get("KLOA_SECRET", "").strip()
-CLAUDE_MODE = os.environ.get("KLOA_CLAUDE_MODE", "0").strip() == "1"
+TOKEN = os.environ.get("ASSISTANT_TOKEN", "").strip()
+CHAT_ID_STR = os.environ.get("ASSISTANT_CHAT_ID", "").strip()
+SECRET = os.environ.get("ASSISTANT_SECRET", "").strip()
+CLAUDE_MODE = os.environ.get("ASSISTANT_CLAUDE_MODE", "0").strip() == "1"
 
 if not TOKEN or not CHAT_ID_STR:
-    print("❌ KLOA_TOKEN and KLOA_CHAT_ID must be set.")
+    print("❌ ASSISTANT_TOKEN and ASSISTANT_CHAT_ID must be set.")
     print("   Source daemon/config.sh or export them yourself.")
     sys.exit(1)
 
 try:
     CHAT_ID = int(CHAT_ID_STR)
 except ValueError:
-    print(f"❌ KLOA_CHAT_ID must be an integer (got: {CHAT_ID_STR})")
+    print(f"❌ ASSISTANT_CHAT_ID must be an integer (got: {CHAT_ID_STR})")
     sys.exit(1)
 
 API = f"https://api.telegram.org/bot{TOKEN}"
-STATE_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".kloa_state.json")
+STATE_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".assistant_state.json")
 
 # ── State persistence ──────────────────────────────────────────────────────
 
@@ -100,7 +100,7 @@ def send_photo(path):
     """Send a photo to Telegram via multipart upload."""
     try:
         import mimetypes
-        boundary = "----kloa_boundary"
+        boundary = "----assistant_boundary"
         with open(path, "rb") as f:
             photo_data = f.read()
 
@@ -188,7 +188,7 @@ def forward_to_claude(text):
         else:
             send(f"💬 Claude Code:\n\n{out}")
     except FileNotFoundError:
-        send("⚠️ Claude Code not found. Install it or disable KLOA_CLAUDE_MODE.")
+        send("⚠️ Claude Code not found. Install it or disable ASSISTANT_CLAUDE_MODE.")
     except subprocess.TimeoutExpired:
         send("⏰ Claude Code timed out (5 min)")
     except Exception as e:
@@ -202,7 +202,7 @@ def handle(text):
 
     if lower == "help":
         help_text = (
-            "🤖 *kloa commands:*\n"
+            "🤖 *assistant commands:*\n"
             "• `screenshot` — send a screenshot\n"
             "• `open <app>` — open an app\n"
             "• `say <text>` — speak aloud\n"
@@ -222,7 +222,7 @@ def handle(text):
         h, m = divmod(int(uptime), 3600)
         m, s = divmod(m, 60)
         send(
-            f"🟢 kloa daemon is running\n"
+            f"🟢 assistant daemon is running\n"
             f"Uptime: {h}h {m}m {s}s\n"
             f"Commands processed: {stats['commands']}\n"
             f"Claude mode: {'on' if CLAUDE_MODE else 'off'}\n"
@@ -284,10 +284,11 @@ def handle(text):
 
     elif lower.startswith("remind "):
         reminder = text[7:].strip()
-        # AppleScript with proper heredoc — no injection
+        # Escape characters that would break AppleScript strings
+        safe = reminder.replace("\\", "\\\\").replace('"', '\\"')
         script = (
             'tell application "Reminders"\n'
-            f'    make new reminder with properties {{name:"{reminder}"}}\n'
+            f'    make new reminder with properties {{name:"{safe}"}}\n'
             "end tell"
         )
         err = run_applescript(script)
@@ -316,7 +317,7 @@ def main():
     state = load_state()
     offset = state.get("offset", 0)
 
-    print(f"🤖 kloa daemon starting...")
+    print(f"🤖 assistant daemon starting...")
     print(f"   Claude mode: {'on' if CLAUDE_MODE else 'off'}")
     print(f"   Secret: {'required' if SECRET else 'disabled (⚠️  insecure)'}")
     print(f"   State file: {STATE_FILE}")
@@ -324,7 +325,7 @@ def main():
     # Send startup notification (survive failure gracefully)
     try:
         send(
-            f"🟢 kloa daemon is online.\n"
+            f"🟢 assistant daemon is online.\n"
             f"Send `help` for commands." +
             ("\nAnything else → Claude Code 🚀" if CLAUDE_MODE else "")
         )
@@ -346,24 +347,32 @@ def main():
         try:
             data = api_call("getUpdates", {"offset": offset, "timeout": 30})
             for update in data.get("result", []):
-                offset = update["update_id"] + 1
-                # Persist offset immediately so crashes don't lose messages
-                state["offset"] = offset
-                save_state(state)
-
                 msg = update.get("message", {})
                 chat_id = msg.get("chat", {}).get("id")
                 text = msg.get("text", "").strip()
 
-                # Only respond to your own chat
-                if chat_id != CHAT_ID:
-                    continue
-                if not text:
+                # Skip non-target chats & empty messages (advance past them)
+                if chat_id != CHAT_ID or not text:
+                    offset = update["update_id"] + 1
+                    state["offset"] = offset
+                    save_state(state)
                     continue
 
-                # Skip [ASK] prefixed messages — those belong to kloa_ask.sh
+                # Skip [ASK] prefixed messages — those belong to assistant_ask.sh.
+                # Fresh messages (<60s old): leave offset unchanged so ask.sh sees them.
+                # Stale messages: advance offset to prevent infinite polling loop.
                 if text.startswith("[ASK]"):
+                    msg_age = int(time.time()) - msg.get("date", 0)
+                    if msg_age > 60:
+                        offset = update["update_id"] + 1
+                        state["offset"] = offset
+                        save_state(state)
                     continue
+
+                # Advance offset for messages we handle
+                offset = update["update_id"] + 1
+                state["offset"] = offset
+                save_state(state)
 
                 stats["commands"] += 1
                 print(f"[{time.strftime('%H:%M:%S')}] Received: {text}")
@@ -371,7 +380,7 @@ def main():
 
         except KeyboardInterrupt:
             try:
-                send("🔴 kloa daemon stopped.")
+                send("🔴 assistant daemon stopped.")
             except Exception:
                 pass
             print("\nStopped.")

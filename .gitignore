@@ -4,7 +4,7 @@
 daemon/config.sh
 
 # ── Runtime state ──────────────────────────
-daemon/.kloa_state.json
+daemon/.assistant_state.json
 
 # ── Python ─────────────────────────────────
 __pycache__/
