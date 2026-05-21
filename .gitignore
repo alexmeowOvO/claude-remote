@@ -1,0 +1,21 @@
+# ── Credentials ────────────────────────────
+# NEVER commit config.sh — it contains secrets.
+# Copy config.example.sh to config.sh and fill in your values.
+daemon/config.sh
+
+# ── Runtime state ──────────────────────────
+daemon/.kloa_state.json
+
+# ── Python ─────────────────────────────────
+__pycache__/
+*.py[cod]
+*.pyo
+*.egg-info/
+dist/
+build/
+
+# ── macOS ──────────────────────────────────
+.DS_Store
+*.swp
+*.swo
+*~
