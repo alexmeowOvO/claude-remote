@@ -29,6 +29,7 @@ import json
 import time
 import os
 import sys
+import signal
 import urllib.request
 import urllib.parse
 import tempfile
@@ -515,14 +516,14 @@ def main():
                         save_state(state)
                     continue
 
-                # Advance offset for messages we handle
-                offset = update["update_id"] + 1
-                state["offset"] = offset
-                save_state(state)
-
                 stats["commands"] += 1
                 print(f"[{time.strftime('%H:%M:%S')}] Received: {text}")
                 handle(text)
+
+                # Advance offset AFTER successful handle — prevents silent loss on crash
+                offset = update["update_id"] + 1
+                state["offset"] = offset
+                save_state(state)
 
         except KeyboardInterrupt:
             try:
@@ -535,5 +536,15 @@ def main():
             print(f"[error] {e}")
             time.sleep(5)
 
+def _shutdown(signum, frame):
+    """Handle SIGTERM gracefully (sent by launchd on stop)."""
+    try:
+        send("🔴 assistant daemon stopped.")
+    except Exception:
+        pass
+    print("\nStopped (SIGTERM).")
+    sys.exit(0)
+
 if __name__ == "__main__":
+    signal.signal(signal.SIGTERM, _shutdown)
     main()

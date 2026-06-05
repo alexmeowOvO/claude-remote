@@ -13,8 +13,8 @@ if [ $# -lt 1 ]; then
     exit 1
 fi
 
-MESSAGE="$1"
-curl -s -X POST "${ASSISTANT_API}/sendMessage" \
+MESSAGE="$*"
+curl -s -X POST "https://api.telegram.org/bot${ASSISTANT_TOKEN}/sendMessage" \
     -d "chat_id=${ASSISTANT_CHAT_ID}" \
     --data-urlencode "text=${MESSAGE}" \
     > /dev/null
