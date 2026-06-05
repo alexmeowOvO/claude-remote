@@ -33,6 +33,11 @@ echo "✅ Hooks installed:"
 echo "   $HOOKS_DIR/stop_notify.sh  (Stop hook)"
 echo "   $HOOKS_DIR/notify_hook.sh  (Notification hook)"
 
+# Install assistant_ask.sh alongside hooks so /notification can call it
+cp "$SCRIPT_DIR/../daemon/assistant_ask.sh" "$HOOKS_DIR/assistant_ask.sh"
+chmod +x "$HOOKS_DIR/assistant_ask.sh"
+echo "   $HOOKS_DIR/assistant_ask.sh  (approval gating for /notification)"
+
 # Install config alongside the hooks
 HOOK_CONFIG="$HOOKS_DIR/config.sh"
 DAEMON_CONFIG="$SCRIPT_DIR/../daemon/config.sh"

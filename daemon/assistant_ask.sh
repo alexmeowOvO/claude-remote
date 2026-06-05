@@ -24,6 +24,15 @@ APPROVAL_ID=$(python3 -c "import secrets; print(secrets.token_hex(3))")
 SENTINEL="/tmp/assistant_ask_${APPROVAL_ID}"
 RESULT_FILE="${SENTINEL}.result"
 
+# Check daemon is running — result file will never appear without it
+if ! pgrep -f "assistant_daemon.py" > /dev/null 2>&1; then
+  echo "[assistant_ask] WARNING: daemon is not running. Approval will time out." >&2
+  curl -s -X POST "${API}/sendMessage" \
+    -d "chat_id=${ASSISTANT_CHAT_ID}" \
+    --data-urlencode "text=⚠️ Approval requested but the assistant daemon is not running — cannot process reply. Start the daemon and try again." > /dev/null
+  exit 1
+fi
+
 # Create sentinel so daemon knows this ID belongs to a shell approval
 touch "$SENTINEL"
 trap 'rm -f "$SENTINEL" "$RESULT_FILE"' EXIT

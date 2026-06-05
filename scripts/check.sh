@@ -31,7 +31,7 @@ for f in "$REPO"/daemon/*.sh "$REPO"/claude-code/**/*.sh "$REPO"/scripts/*.sh; d
   fi
 done
 
-# Plist lint
+# Plist lint (both .plist and .plist.template)
 echo "── Plist ──"
 for f in "$REPO"/daemon/*.plist; do
   [ -f "$f" ] || continue
@@ -40,6 +40,18 @@ for f in "$REPO"/daemon/*.plist; do
   else
     fail "$(basename "$f") — invalid plist"
   fi
+done
+for f in "$REPO"/daemon/*.plist.template; do
+  [ -f "$f" ] || continue
+  # Substitute placeholder with a dummy path and lint the result
+  tmp=$(mktemp /tmp/check_plist_XXXXXX.plist)
+  sed 's|/REPLACE_WITH_REPO_PATH|/tmp/dummy|g' "$f" > "$tmp"
+  if plutil -lint "$tmp" > /dev/null 2>&1; then
+    ok "$(basename "$f")"
+  else
+    fail "$(basename "$f") — invalid plist"
+  fi
+  rm -f "$tmp"
 done
 
 # Shellcheck (optional)

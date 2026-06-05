@@ -4,24 +4,27 @@ description: Send a Telegram alert before performing risky or irreversible actio
 
 Use this before any action that is risky, irreversible, or requires user approval — such as deleting files, pushing to git, making API calls, or running destructive commands.
 
-## Step 1 — Send Telegram alert
+## Step 1 — Gate the action through the approval script
 
 ```bash
-source ~/.claude/hooks/config.sh 2>/dev/null
-curl -s -X POST "https://api.telegram.org/bot${ASSISTANT_TOKEN}/sendMessage" \
-  -d "chat_id=${ASSISTANT_CHAT_ID}" \
-  --data-urlencode "text=⚠️ Claude Code needs your approval!
-
-Action: [WHAT YOU ARE ABOUT TO DO]
-Risk: [WHY IT MATTERS / WHAT COULD GO WRONG]
-
-Reply YES to proceed or NO to cancel." > /dev/null
+bash ~/.claude/hooks/assistant_ask.sh "[WHAT YOU ARE ABOUT TO DO] — proceed?" 120
 ```
 
-Replace `[WHAT YOU ARE ABOUT TO DO]` and `[WHY IT MATTERS]` with specifics every time.
+- Returns exit code `0` if approved, `1` if denied or timed out.
+- The script sends a `YES <id>` / `NO <id>` prompt, and the daemon routes the reply mechanically — no ambiguity with normal commands.
 
-## Step 2 — Wait for reply
+## Step 2 — Act on the result
 
-Tell the user in chat what you are waiting for, then pause and do NOT proceed.
+```bash
+if bash ~/.claude/hooks/assistant_ask.sh "[DESCRIBE THE ACTION]?" 120; then
+  echo "Approved — proceeding."
+  # ... your risky command here ...
+else
+  echo "Denied or timed out — cancelled."
+fi
+```
 
-When the user replies via Telegram, the assistant daemon forwards it to Claude Code as `claude --continue "YES"` (or whatever they send). Wait for that continuation before acting.
+## Notes
+
+- The daemon must be running for approvals to be routed. If it is not running, the script will time out and return denied (safe default).
+- Replace `[DESCRIBE THE ACTION]` with a specific, plain-English description every time — the user reads this on their phone.
