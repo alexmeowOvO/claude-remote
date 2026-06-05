@@ -7,8 +7,9 @@ Use this before any action that is risky, irreversible, or requires user approva
 ## Step 1 — Send Telegram alert
 
 ```bash
-curl -s -X POST "https://api.telegram.org/botYOUR_BOT_TOKEN/sendMessage" \
-  -d "chat_id=YOUR_CHAT_ID" \
+source ~/.claude/hooks/config.sh 2>/dev/null
+curl -s -X POST "https://api.telegram.org/bot${ASSISTANT_TOKEN}/sendMessage" \
+  -d "chat_id=${ASSISTANT_CHAT_ID}" \
   --data-urlencode "text=⚠️ Claude Code needs your approval!
 
 Action: [WHAT YOU ARE ABOUT TO DO]

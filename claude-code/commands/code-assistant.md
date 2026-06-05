@@ -9,8 +9,9 @@ You are starting a supervised coding session. The user may be away from their Ma
 Run this immediately:
 
 ```bash
-curl -s -X POST "https://api.telegram.org/botYOUR_BOT_TOKEN/sendMessage" \
-  -d "chat_id=YOUR_CHAT_ID" \
+source ~/.claude/hooks/config.sh 2>/dev/null
+curl -s -X POST "https://api.telegram.org/bot${ASSISTANT_TOKEN}/sendMessage" \
+  -d "chat_id=${ASSISTANT_CHAT_ID}" \
   --data-urlencode "text=🚀 Claude Code session started!
 
 Project: $(basename $(pwd))

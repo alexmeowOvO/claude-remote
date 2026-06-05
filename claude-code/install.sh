@@ -24,12 +24,16 @@ echo "✅ Slash commands installed:"
 echo "   /code-assistant → supervised session startup with Telegram"
 echo "   /notification   → alert user before risky actions"
 
-# Install stop hook
+# Install hooks
 cp "$SCRIPT_DIR/hooks/stop_notify.sh" "$HOOKS_DIR/stop_notify.sh"
 chmod +x "$HOOKS_DIR/stop_notify.sh"
-echo "✅ Stop hook installed: $HOOKS_DIR/stop_notify.sh"
+cp "$SCRIPT_DIR/hooks/notify_hook.sh" "$HOOKS_DIR/notify_hook.sh"
+chmod +x "$HOOKS_DIR/notify_hook.sh"
+echo "✅ Hooks installed:"
+echo "   $HOOKS_DIR/stop_notify.sh  (Stop hook)"
+echo "   $HOOKS_DIR/notify_hook.sh  (Notification hook)"
 
-# Install config alongside the hook (if not already present)
+# Install config alongside the hooks (must use ASSISTANT_* var names)
 HOOK_CONFIG="$HOOKS_DIR/config.sh"
 DAEMON_CONFIG="$SCRIPT_DIR/../daemon/config.sh"
 if [ ! -f "$HOOK_CONFIG" ]; then
@@ -47,7 +51,7 @@ fi
 
 # Update settings.json
 STOP_HOOK_CMD="$HOOKS_DIR/stop_notify.sh"
-NOTIFY_HOOK_CMD="source $HOOK_CONFIG 2>/dev/null; curl -s -X POST \"https://api.telegram.org/bot\${ASSISTANT_TOKEN}/sendMessage\" -d \"chat_id=\${ASSISTANT_CHAT_ID}\" --data-urlencode 'text=🔔 Claude Code is waiting for you — switch back when ready.' > /dev/null"
+NOTIFY_HOOK_CMD="$HOOKS_DIR/notify_hook.sh"
 
 if [ ! -f "$SETTINGS" ]; then
     echo "Creating new $SETTINGS..."
@@ -60,7 +64,7 @@ if [ ! -f "$SETTINGS" ]; then
         "hooks": [
           {
             "type": "command",
-            "command": "bash -c 'source $HOOK_CONFIG 2>/dev/null; curl -s -X POST \"https://api.telegram.org/bot\${ASSISTANT_TOKEN}/sendMessage\" -d \"chat_id=\${ASSISTANT_CHAT_ID}\" --data-urlencode \"text=🔔 Claude Code is waiting for you — switch back when ready.\" > /dev/null'"
+            "command": "$NOTIFY_HOOK_CMD"
           }
         ]
       }
@@ -82,8 +86,9 @@ EOF
     echo "✅ Created $SETTINGS with Notification + Stop hooks"
 else
     echo "⚠️  $SETTINGS already exists."
-    echo "   Stop hook path: $STOP_HOOK_CMD"
-    echo "   Make sure your Stop hook entry points to that path."
+    echo "   Add these hook commands manually if needed:"
+    echo "   Stop:         $STOP_HOOK_CMD"
+    echo "   Notification: $NOTIFY_HOOK_CMD"
 fi
 
 echo ""
