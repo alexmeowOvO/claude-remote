@@ -407,6 +407,10 @@ def _init_approval_dir(path: str) -> None:
 
 _init_approval_dir(_ASK_RESULT_DIR)
 
+# PID file — written at startup, removed on clean shutdown.
+# assistant_ask.sh uses this to verify the daemon that owns the approval dir is running.
+_PID_FILE = os.path.join(_ASK_RESULT_DIR, "daemon.pid")
+
 def _ask_result_path(approval_id: str) -> str:
     return os.path.join(_ASK_RESULT_DIR, f"ask_{approval_id}")
 
@@ -587,6 +591,14 @@ def main():
     state = load_state()
     offset = state.get("offset", 0)
 
+    # Write PID file so assistant_ask.sh can verify this daemon instance is running
+    try:
+        fd = os.open(_PID_FILE, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, "w") as f:
+            f.write(str(os.getpid()))
+    except Exception as e:
+        log.warning("Could not write PID file: %s", e)
+
     log.info("assistant daemon starting...")
     log.info("Claude mode: %s", "on" if CLAUDE_MODE else "off")
     log.info("Secret: %s", "required" if SECRET else "disabled (insecure)")
@@ -644,6 +656,10 @@ def main():
                 send("🔴 assistant daemon stopped.")
             except Exception:
                 pass
+            try:
+                os.remove(_PID_FILE)
+            except OSError:
+                pass
             log.info("Stopped (KeyboardInterrupt).")
             sys.exit(0)
         except Exception as e:
@@ -656,6 +672,10 @@ def _shutdown(signum, frame):
     try:
         send("🔴 assistant daemon stopped.")
     except Exception:
+        pass
+    try:
+        os.remove(_PID_FILE)
+    except OSError:
         pass
     log.info("Stopped (SIGTERM).")
     sys.exit(0)

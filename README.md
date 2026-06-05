@@ -63,6 +63,11 @@ bash claude-code/install.sh
 ```
 This copies the slash commands to `~/.claude/commands/` and installs the Stop and Notification hooks into `~/.claude/settings.json`.
 
+If you later rotate your bot token or chat ID in `daemon/config.sh`, re-run with `--sync-config` to push the updated credentials to the hooks:
+```bash
+bash claude-code/install.sh --sync-config
+```
+
 ### 4. Start the daemon
 ```bash
 cd daemon

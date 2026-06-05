@@ -21,17 +21,40 @@ API="https://api.telegram.org/bot${ASSISTANT_TOKEN}"
 
 # Private directory — world-writable /tmp is unsafe for approval sentinels
 APPROVAL_DIR="/tmp/claude-remote-${UID}"
+PID_FILE="${APPROVAL_DIR}/daemon.pid"
+
+# Create directory if missing, then verify ownership and mode
 mkdir -p "$APPROVAL_DIR"
 chmod 0700 "$APPROVAL_DIR"
+
+# Verify ownership and mode — abort if another user pre-created the path
+DIR_OWNER=$(python3 -c "import os,stat; st=os.stat('$APPROVAL_DIR'); print(st.st_uid)")
+DIR_MODE=$(python3 -c "import os,stat; st=os.stat('$APPROVAL_DIR'); print(oct(stat.S_IMODE(st.st_mode)))")
+if [ "$DIR_OWNER" != "$(id -u)" ]; then
+  echo "[assistant_ask] ERROR: $APPROVAL_DIR is owned by UID $DIR_OWNER, expected $(id -u). Aborting." >&2
+  exit 1
+fi
+if [ "$DIR_MODE" != "0o700" ]; then
+  echo "[assistant_ask] ERROR: $APPROVAL_DIR has mode $DIR_MODE, expected 0o700. Fix with: chmod 700 $APPROVAL_DIR" >&2
+  exit 1
+fi
 
 # Generate unique approval ID
 APPROVAL_ID=$(python3 -c "import secrets; print(secrets.token_hex(3))")
 SENTINEL="${APPROVAL_DIR}/ask_${APPROVAL_ID}"
 RESULT_FILE="${SENTINEL}.result"
 
-# Check daemon is running — result file will never appear without it
-if ! pgrep -f "assistant_daemon.py" > /dev/null 2>&1; then
-  echo "[assistant_ask] WARNING: daemon is not running. Approval will time out." >&2
+# Check daemon is running via PID file — pgrep can match unrelated processes
+_daemon_running() {
+  [ -f "$PID_FILE" ] || return 1
+  local pid
+  pid=$(cat "$PID_FILE" 2>/dev/null) || return 1
+  [[ "$pid" =~ ^[0-9]+$ ]] || return 1
+  kill -0 "$pid" 2>/dev/null
+}
+
+if ! _daemon_running; then
+  echo "[assistant_ask] WARNING: daemon is not running (no valid PID file at $PID_FILE)." >&2
   curl -s -X POST "${API}/sendMessage" \
     -d "chat_id=${ASSISTANT_CHAT_ID}" \
     --data-urlencode "text=⚠️ Approval requested but the assistant daemon is not running — cannot process reply. Start the daemon and try again." > /dev/null
