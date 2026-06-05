@@ -385,10 +385,12 @@ def _schedule_usage_notification(resets_at):
 
 # ── Command handlers ───────────────────────────────────────────────────────
 
-_ASK_RESULT_DIR = tempfile.gettempdir()
+# Private 0700 directory — avoids world-writable /tmp races
+_ASK_RESULT_DIR = os.path.join(tempfile.gettempdir(), f"claude-remote-{os.getuid()}")
+os.makedirs(_ASK_RESULT_DIR, mode=0o700, exist_ok=True)
 
 def _ask_result_path(approval_id: str) -> str:
-    return os.path.join(_ASK_RESULT_DIR, f"assistant_ask_{approval_id}")
+    return os.path.join(_ASK_RESULT_DIR, f"ask_{approval_id}")
 
 def _try_route_approval(text: str) -> bool:
     """
@@ -423,7 +425,8 @@ def _try_route_approval(text: str) -> bool:
     sentinel = _ask_result_path(approval_id)
     if os.path.exists(sentinel):
         result_file = sentinel + ".result"
-        with open(result_file, "w") as f:
+        fd = os.open(result_file, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, "w") as f:
             f.write("YES" if approved else "NO")
         send("✅ Approved." if approved else "❌ Denied — cancelled.")
         return True

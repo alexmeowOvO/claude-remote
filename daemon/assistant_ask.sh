@@ -19,9 +19,14 @@ QUESTION="$1"
 TIMEOUT="${2:-120}"
 API="https://api.telegram.org/bot${ASSISTANT_TOKEN}"
 
+# Private directory — world-writable /tmp is unsafe for approval sentinels
+APPROVAL_DIR="/tmp/claude-remote-${UID}"
+mkdir -p "$APPROVAL_DIR"
+chmod 0700 "$APPROVAL_DIR"
+
 # Generate unique approval ID
 APPROVAL_ID=$(python3 -c "import secrets; print(secrets.token_hex(3))")
-SENTINEL="/tmp/assistant_ask_${APPROVAL_ID}"
+SENTINEL="${APPROVAL_DIR}/ask_${APPROVAL_ID}"
 RESULT_FILE="${SENTINEL}.result"
 
 # Check daemon is running — result file will never appear without it

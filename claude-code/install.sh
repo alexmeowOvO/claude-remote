@@ -51,7 +51,15 @@ if [ ! -f "$HOOK_CONFIG" ]; then
     echo "   Edit it and fill in your ASSISTANT_TOKEN and ASSISTANT_CHAT_ID."
   fi
 else
-  echo "✅ Credentials already at $HOOK_CONFIG (not overwritten)"
+  # Config already exists — check if it differs from daemon/config.sh
+  if [ -f "$DAEMON_CONFIG" ] && ! diff -q "$DAEMON_CONFIG" "$HOOK_CONFIG" > /dev/null 2>&1; then
+    echo "⚠️  Hook config differs from daemon/config.sh (token or chat ID may have changed)."
+    echo "   Hook config: $HOOK_CONFIG"
+    echo "   Daemon config: $DAEMON_CONFIG"
+    echo "   Run: cp \"$DAEMON_CONFIG\" \"$HOOK_CONFIG\"  to sync, or edit manually."
+  else
+    echo "✅ Hook config is up to date"
+  fi
 fi
 
 # Merge hooks into settings.json using Python (preserves existing config)
