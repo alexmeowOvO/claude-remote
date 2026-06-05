@@ -4,6 +4,15 @@
 
 set -e
 
+# Parse flags
+SYNC_CONFIG=0
+for arg in "$@"; do
+  case "$arg" in
+    --sync-config) SYNC_CONFIG=1 ;;
+    *) echo "Unknown flag: $arg" >&2; exit 1 ;;
+  esac
+done
+
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 CLAUDE_DIR="$HOME/.claude"
 COMMANDS_DIR="$CLAUDE_DIR/commands"
@@ -53,10 +62,14 @@ if [ ! -f "$HOOK_CONFIG" ]; then
 else
   # Config already exists — check if it differs from daemon/config.sh
   if [ -f "$DAEMON_CONFIG" ] && ! diff -q "$DAEMON_CONFIG" "$HOOK_CONFIG" > /dev/null 2>&1; then
-    echo "⚠️  Hook config differs from daemon/config.sh (token or chat ID may have changed)."
-    echo "   Hook config: $HOOK_CONFIG"
-    echo "   Daemon config: $DAEMON_CONFIG"
-    echo "   Run: cp \"$DAEMON_CONFIG\" \"$HOOK_CONFIG\"  to sync, or edit manually."
+    if [ "$SYNC_CONFIG" -eq 1 ]; then
+      cp "$DAEMON_CONFIG" "$HOOK_CONFIG"
+      echo "✅ Hook config synced from daemon/config.sh"
+    else
+      echo "⚠️  Hook config differs from daemon/config.sh (token or chat ID may have changed)."
+      echo "   Re-run with --sync-config to overwrite, or edit manually:"
+      echo "   cp \"$DAEMON_CONFIG\" \"$HOOK_CONFIG\""
+    fi
   else
     echo "✅ Hook config is up to date"
   fi

@@ -387,7 +387,25 @@ def _schedule_usage_notification(resets_at):
 
 # Private 0700 directory — avoids world-writable /tmp races
 _ASK_RESULT_DIR = os.path.join(tempfile.gettempdir(), f"claude-remote-{os.getuid()}")
-os.makedirs(_ASK_RESULT_DIR, mode=0o700, exist_ok=True)
+
+def _init_approval_dir(path: str) -> None:
+    """Create or verify the private approval directory. Abort if unsafe."""
+    os.makedirs(path, mode=0o700, exist_ok=True)
+    st = os.stat(path)
+    import stat as _stat
+    if st.st_uid != os.getuid():
+        raise RuntimeError(
+            f"Approval directory {path} is owned by UID {st.st_uid}, "
+            f"expected {os.getuid()}. Possible pre-creation attack. Aborting."
+        )
+    mode = _stat.S_IMODE(st.st_mode)
+    if mode != 0o700:
+        raise RuntimeError(
+            f"Approval directory {path} has mode {oct(mode)}, expected 0700. "
+            f"Fix with: chmod 700 {path}"
+        )
+
+_init_approval_dir(_ASK_RESULT_DIR)
 
 def _ask_result_path(approval_id: str) -> str:
     return os.path.join(_ASK_RESULT_DIR, f"ask_{approval_id}")
@@ -610,17 +628,6 @@ def main():
                     offset = update["update_id"] + 1
                     state["offset"] = offset
                     save_state(state)
-                    continue
-
-                # Skip [ASK] prefixed messages — those belong to assistant_ask.sh.
-                # Fresh messages (<60s old): leave offset unchanged so ask.sh sees them.
-                # Stale messages: advance offset to prevent infinite polling loop.
-                if text.startswith("[ASK]"):
-                    msg_age = int(time.time()) - msg.get("date", 0)
-                    if msg_age > 60:
-                        offset = update["update_id"] + 1
-                        state["offset"] = offset
-                        save_state(state)
                     continue
 
                 stats["commands"] += 1
