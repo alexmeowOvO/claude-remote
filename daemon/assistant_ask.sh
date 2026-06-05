@@ -13,6 +13,11 @@
 
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+if [ ! -f "${SCRIPT_DIR}/config.sh" ]; then
+  echo "❌ config.sh not found at ${SCRIPT_DIR}/config.sh" >&2
+  echo "   Copy config.example.sh to config.sh and fill in your credentials." >&2
+  exit 1
+fi
 source "${SCRIPT_DIR}/config.sh"
 
 QUESTION="$1"

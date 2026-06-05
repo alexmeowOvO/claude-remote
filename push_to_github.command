@@ -1,4 +1,5 @@
 #!/bin/bash
+set -euo pipefail
 # push_to_github.command
 # Double-click to commit everything and push claude-remote to GitHub.
 # Before running: create an empty repo at https://github.com/new
@@ -63,8 +64,15 @@ else
   git remote add origin "$REPO_URL"
 fi
 
-git push -u origin main
-
+if git push -u origin main; then
+  echo ""
+  echo "✅ Done! Your repo is live at $REPO_URL"
+else
+  echo ""
+  echo "❌ Push failed — check output above."
+  read -p "Press Enter to close..."
+  exit 1
+fi
 echo ""
 echo "✅ Done! Your repo is live at $REPO_URL"
 echo ""

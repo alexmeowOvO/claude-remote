@@ -42,6 +42,32 @@ echo "✅ Plist written to $PLIST_DEST"
 # Load (or reload) the agent
 launchctl unload "$PLIST_DEST" 2>/dev/null || true
 launchctl load "$PLIST_DEST"
-echo "✅ Daemon loaded — will start now and on every login."
-echo "   Logs: /tmp/assistant_daemon.log"
-echo "   Stop: launchctl unload $PLIST_DEST"
+echo "✅ Plist loaded — checking daemon started..."
+
+# Give the daemon a moment to write its PID file, then verify it is alive
+HEARTBEAT_FILE="/tmp/claude-remote-$(id -u)/daemon.heartbeat"
+MAX_WAIT=15
+for i in $(seq 1 $MAX_WAIT); do
+  sleep 1
+  if [ -f "$HEARTBEAT_FILE" ]; then
+    AGE=$(python3 -c "
+import time
+try:
+    ts = float(open('$HEARTBEAT_FILE').read())
+    print(int(time.time() - ts))
+except Exception:
+    print(9999)
+")
+    if [ "$AGE" -lt 30 ]; then
+      echo "✅ Daemon is alive (heartbeat age: ${AGE}s)."
+      echo "   Logs: /tmp/assistant_daemon.log"
+      echo "   Stop: launchctl unload $PLIST_DEST"
+      exit 0
+    fi
+  fi
+done
+
+echo "⚠️  Daemon did not produce a heartbeat within ${MAX_WAIT}s."
+echo "   It may have exited immediately — check for missing config.sh or errors:"
+echo "   cat /tmp/assistant_daemon.log"
+echo "   cat /tmp/assistant_daemon.err"

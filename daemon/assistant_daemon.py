@@ -414,7 +414,9 @@ _PID_FILE = os.path.join(_ASK_RESULT_DIR, "daemon.pid")
 # Heartbeat file — updated every poll cycle so assistant_ask.sh can detect PID reuse.
 # A crashed daemon will leave a stale heartbeat; a reused PID won't update it.
 _HEARTBEAT_FILE = os.path.join(_ASK_RESULT_DIR, "daemon.heartbeat")
-_HEARTBEAT_MAX_AGE = 120  # seconds — generous enough to survive API backoff (max 60s sleep + 35s timeout)
+_HEARTBEAT_INTERVAL = 30   # seconds between heartbeat writes
+_HEARTBEAT_MAX_AGE  = 120  # seconds before assistant_ask.sh treats daemon as dead
+                            # Must be > HEARTBEAT_INTERVAL + worst-case write delay
 
 _heartbeat_error_logged = False
 
@@ -429,6 +431,15 @@ def _update_heartbeat() -> None:
         if not _heartbeat_error_logged:
             log.error("Heartbeat write failed — assistant_ask.sh will reject approvals: %s", e)
             _heartbeat_error_logged = True
+
+def _start_heartbeat_thread() -> None:
+    """Write heartbeat on a fixed interval, independent of handle() blocking."""
+    def _loop():
+        while True:
+            _update_heartbeat()
+            time.sleep(_HEARTBEAT_INTERVAL)
+    t = threading.Thread(target=_loop, daemon=True, name="heartbeat")
+    t.start()
 
 def _ask_result_path(approval_id: str) -> str:
     return os.path.join(_ASK_RESULT_DIR, f"ask_{approval_id}")
@@ -619,6 +630,9 @@ def main():
     except Exception as e:
         log.warning("Could not write PID file: %s", e)
 
+    # Heartbeat runs in a background thread — independent of handle() blocking
+    _start_heartbeat_thread()
+
     log.info("assistant daemon starting...")
     log.info("Claude mode: %s", "on" if CLAUDE_MODE else "off")
     log.info("Secret: %s", "required" if SECRET else "disabled (insecure)")
@@ -648,7 +662,6 @@ def main():
     error_backoff = 5  # seconds, doubles on repeated errors up to 60s
     while True:
         try:
-            _update_heartbeat()
             data = api_call("getUpdates", {"offset": offset, "timeout": 30})
             error_backoff = 5  # reset on success
             for update in data.get("result", []):
