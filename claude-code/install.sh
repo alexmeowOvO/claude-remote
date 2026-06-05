@@ -94,8 +94,10 @@ if os.path.exists(settings_path):
         ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
         backup = f"{settings_path}.bak_{ts}"
         shutil.copy2(settings_path, backup)
-        print(f"   ⚠️  {settings_path} is malformed ({e})")
-        print(f"   Backed up to {backup}, starting fresh.")
+        print(f"   ⚠️  WARNING: {settings_path} is malformed ({e})")
+        print(f"   Backed up to: {backup}")
+        print(f"   Starting fresh — your existing Claude Code settings (models, permissions, etc.) will be lost.")
+        print(f"   To restore: cp \"{backup}\" \"{settings_path}\" and re-run.")
         settings = {}
 else:
     settings = {}

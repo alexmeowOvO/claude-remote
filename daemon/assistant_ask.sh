@@ -23,7 +23,7 @@ API="https://api.telegram.org/bot${ASSISTANT_TOKEN}"
 APPROVAL_DIR="/tmp/claude-remote-${UID}"
 PID_FILE="${APPROVAL_DIR}/daemon.pid"
 HEARTBEAT_FILE="${APPROVAL_DIR}/daemon.heartbeat"
-HEARTBEAT_MAX_AGE=60  # seconds — must match daemon's _HEARTBEAT_MAX_AGE
+HEARTBEAT_MAX_AGE=120  # seconds — must match daemon's _HEARTBEAT_MAX_AGE (generous enough for API backoff)
 
 # If the directory already exists, verify ownership BEFORE attempting chmod.
 # If another user pre-created it, chmod would fail under set -e before

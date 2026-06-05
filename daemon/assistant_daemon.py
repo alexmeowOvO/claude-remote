@@ -414,15 +414,21 @@ _PID_FILE = os.path.join(_ASK_RESULT_DIR, "daemon.pid")
 # Heartbeat file — updated every poll cycle so assistant_ask.sh can detect PID reuse.
 # A crashed daemon will leave a stale heartbeat; a reused PID won't update it.
 _HEARTBEAT_FILE = os.path.join(_ASK_RESULT_DIR, "daemon.heartbeat")
-_HEARTBEAT_MAX_AGE = 60  # seconds
+_HEARTBEAT_MAX_AGE = 120  # seconds — generous enough to survive API backoff (max 60s sleep + 35s timeout)
+
+_heartbeat_error_logged = False
 
 def _update_heartbeat() -> None:
+    global _heartbeat_error_logged
     try:
         fd = os.open(_HEARTBEAT_FILE, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
         with os.fdopen(fd, "w") as f:
             f.write(str(time.time()))
-    except Exception:
-        pass
+        _heartbeat_error_logged = False  # reset if it recovers
+    except Exception as e:
+        if not _heartbeat_error_logged:
+            log.error("Heartbeat write failed — assistant_ask.sh will reject approvals: %s", e)
+            _heartbeat_error_logged = True
 
 def _ask_result_path(approval_id: str) -> str:
     return os.path.join(_ASK_RESULT_DIR, f"ask_{approval_id}")
@@ -545,10 +551,11 @@ def handle(text):
             send("🔒 `run` is disabled — set ASSISTANT_SECRET in config.sh to enable remote shell execution.")
             return
         cmd = text[4:].strip()
-        if not cmd.startswith(SECRET):
-            send("🔒 Wrong secret. Prefix your command with the shared secret.")
+        secret_prefix = SECRET + " "
+        if not cmd.startswith(secret_prefix):
+            send("🔒 Wrong secret. Format: `run <secret> <command>`")
             return
-        cmd = cmd[len(SECRET):].strip()
+        cmd = cmd[len(secret_prefix):]
         if not cmd:
             send("❌ No command after secret.")
             return

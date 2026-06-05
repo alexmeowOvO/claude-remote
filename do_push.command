@@ -1,6 +1,8 @@
 #!/bin/bash
+# do_push.command — push current branch to origin/main.
+# Only removes index.lock (safe); never touches MERGE_HEAD.
 cd "$(dirname "$0")"
-rm -f .git/index.lock .git/MERGE_HEAD 2>/dev/null
+rm -f .git/index.lock 2>/dev/null
 git push origin main
 echo ""
 echo "✅ Done!"
