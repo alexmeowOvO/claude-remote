@@ -71,8 +71,46 @@ except ValueError:
     log.error("ASSISTANT_CHAT_ID must be an integer (got: %s)", CHAT_ID_STR)
     sys.exit(1)
 
+if not SECRET:
+    log.warning("⚠️  ASSISTANT_SECRET is not set. The `run` command will be disabled.")
+    log.warning("   Set ASSISTANT_SECRET in config.sh to enable remote shell execution.")
+
 API = f"https://api.telegram.org/bot{TOKEN}"
 STATE_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".assistant_state.json")
+
+# ── Approval registry ──────────────────────────────────────────────────────
+# Maps approval_id -> threading.Event so ask() callers can wait for a reply.
+# Replies must be "YES <id>" or "NO <id>" to be routed here.
+_pending_approvals: dict = {}
+_approvals_lock = threading.Lock()
+
+def ask(question: str, timeout: int = 120) -> bool:
+    """
+    Send a YES/NO question via Telegram and block until answered or timed out.
+    Uses a unique approval ID so replies cannot be confused with normal commands.
+    Returns True if approved, False if denied or timed out.
+    """
+    import secrets as _secrets
+    approval_id = _secrets.token_hex(3)  # e.g. "a1b2c3"
+    event = threading.Event()
+    result = {"approved": False}
+
+    with _approvals_lock:
+        _pending_approvals[approval_id] = (event, result)
+
+    send(
+        f"❓ {question}\n\n"
+        f"Reply `YES {approval_id}` to approve or `NO {approval_id}` to cancel "
+        f"({timeout}s timeout)."
+    )
+
+    approved = event.wait(timeout=timeout)
+    with _approvals_lock:
+        _pending_approvals.pop(approval_id, None)
+
+    if not approved:
+        send(f"⏰ Approval `{approval_id}` timed out — cancelled.")
+    return approved and result["approved"]
 
 # ── State persistence ──────────────────────────────────────────────────────
 
@@ -347,9 +385,33 @@ def _schedule_usage_notification(resets_at):
 
 # ── Command handlers ───────────────────────────────────────────────────────
 
+def _try_route_approval(text: str) -> bool:
+    """
+    Check if text is a YES/NO <id> approval reply.
+    Returns True if it was consumed, False if it should be handled normally.
+    """
+    parts = text.strip().split()
+    if len(parts) != 2:
+        return False
+    verdict, approval_id = parts[0].upper(), parts[1].lower()
+    if verdict not in ("YES", "NO"):
+        return False
+    with _approvals_lock:
+        entry = _pending_approvals.get(approval_id)
+    if not entry:
+        return False  # unknown ID — let normal handling deal with it
+    event, result = entry
+    result["approved"] = (verdict == "YES")
+    event.set()
+    send("✅ Approved." if result["approved"] else "❌ Denied — cancelled.")
+    return True
+
 def handle(text):
     text = text.strip()
     lower = text.lower()
+
+    if _try_route_approval(text):
+        return
 
     if lower == "help":
         help_text = (
@@ -416,18 +478,18 @@ def handle(text):
         send(f"🔊 Said: {phrase}")
 
     elif lower.startswith("run "):
+        if not SECRET:
+            send("🔒 `run` is disabled — set ASSISTANT_SECRET in config.sh to enable remote shell execution.")
+            return
         cmd = text[4:].strip()
-        # Check shared secret if configured
-        if SECRET:
-            if not cmd.startswith(SECRET):
-                send("🔒 Secret required. Prefix your command with the shared secret.")
-                return
-            cmd = cmd[len(SECRET):].strip()
-            if not cmd:
-                send("❌ No command after secret.")
-                return
+        if not cmd.startswith(SECRET):
+            send("🔒 Wrong secret. Prefix your command with the shared secret.")
+            return
+        cmd = cmd[len(SECRET):].strip()
+        if not cmd:
+            send("❌ No command after secret.")
+            return
         send(f"💻 Running: `{cmd[:80]}{'...' if len(cmd) > 80 else ''}`")
-        # Run in background thread so daemon stays responsive
         t = threading.Thread(target=_run_and_report, args=(cmd,), daemon=True)
         t.start()
 

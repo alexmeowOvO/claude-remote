@@ -14,8 +14,8 @@ curl -s -X POST "https://api.telegram.org/bot${ASSISTANT_TOKEN}/sendMessage" \
   -d "chat_id=${ASSISTANT_CHAT_ID}" \
   --data-urlencode "text=🚀 Claude Code session started!
 
-Project: $(basename $(pwd))
-Path: $(pwd)
+Project: $(basename "$PWD")
+Path: $PWD
 
 I will notify you when each task is done.
 Reply with your next instruction anytime — assistant will forward it to me." > /dev/null

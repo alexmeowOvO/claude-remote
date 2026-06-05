@@ -1,6 +1,6 @@
 #!/bin/bash
-# install.sh — Install assistant Claude Code integration
-# Installs slash commands, hooks, and updates ~/.claude/settings.json
+# install.sh — Install claude-remote Claude Code integration
+# Installs slash commands, hooks, and MERGES into ~/.claude/settings.json
 
 set -e
 
@@ -10,7 +10,7 @@ COMMANDS_DIR="$CLAUDE_DIR/commands"
 HOOKS_DIR="$CLAUDE_DIR/hooks"
 SETTINGS="$CLAUDE_DIR/settings.json"
 
-echo "🦞 Installing assistant Claude Code integration..."
+echo "🦞 Installing claude-remote Claude Code integration..."
 echo ""
 
 # Create directories
@@ -33,7 +33,7 @@ echo "✅ Hooks installed:"
 echo "   $HOOKS_DIR/stop_notify.sh  (Stop hook)"
 echo "   $HOOKS_DIR/notify_hook.sh  (Notification hook)"
 
-# Install config alongside the hooks (must use ASSISTANT_* var names)
+# Install config alongside the hooks
 HOOK_CONFIG="$HOOKS_DIR/config.sh"
 DAEMON_CONFIG="$SCRIPT_DIR/../daemon/config.sh"
 if [ ! -f "$HOOK_CONFIG" ]; then
@@ -49,47 +49,51 @@ else
   echo "✅ Credentials already at $HOOK_CONFIG (not overwritten)"
 fi
 
-# Update settings.json
+# Merge hooks into settings.json using Python (preserves existing config)
 STOP_HOOK_CMD="$HOOKS_DIR/stop_notify.sh"
 NOTIFY_HOOK_CMD="$HOOKS_DIR/notify_hook.sh"
 
-if [ ! -f "$SETTINGS" ]; then
-    echo "Creating new $SETTINGS..."
-    cat > "$SETTINGS" << EOF
-{
-  "hooks": {
-    "Notification": [
-      {
+python3 - "$SETTINGS" "$STOP_HOOK_CMD" "$NOTIFY_HOOK_CMD" << 'PYEOF'
+import json, sys, os
+
+settings_path, stop_cmd, notify_cmd = sys.argv[1], sys.argv[2], sys.argv[3]
+
+# Load existing settings or start fresh
+if os.path.exists(settings_path):
+    with open(settings_path) as f:
+        settings = json.load(f)
+    print(f"   Merging into existing {settings_path}")
+else:
+    settings = {}
+    print(f"   Creating new {settings_path}")
+
+hooks = settings.setdefault("hooks", {})
+
+def upsert_hook(hook_type, command):
+    """Add or update our hook entry, leaving other hooks untouched."""
+    entries = hooks.setdefault(hook_type, [])
+    # Find existing claude-remote entry by command path substring
+    marker = "stop_notify.sh" if "stop_notify" in command else "notify_hook.sh"
+    for entry in entries:
+        for h in entry.get("hooks", []):
+            if marker in h.get("command", ""):
+                h["command"] = command
+                return
+    # Not found — append a new entry
+    entries.append({
         "matcher": "",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "$NOTIFY_HOOK_CMD"
-          }
-        ]
-      }
-    ],
-    "Stop": [
-      {
-        "matcher": "",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "$STOP_HOOK_CMD"
-          }
-        ]
-      }
-    ]
-  }
-}
-EOF
-    echo "✅ Created $SETTINGS with Notification + Stop hooks"
-else
-    echo "⚠️  $SETTINGS already exists."
-    echo "   Add these hook commands manually if needed:"
-    echo "   Stop:         $STOP_HOOK_CMD"
-    echo "   Notification: $NOTIFY_HOOK_CMD"
-fi
+        "hooks": [{"type": "command", "command": command}]
+    })
+
+upsert_hook("Stop", stop_cmd)
+upsert_hook("Notification", notify_cmd)
+
+with open(settings_path, "w") as f:
+    json.dump(settings, f, indent=2)
+    f.write("\n")
+
+print(f"✅ settings.json updated")
+PYEOF
 
 echo ""
 echo "✅ Done! Restart Claude Code (Code tab) to activate."
@@ -98,9 +102,3 @@ echo "Available slash commands:"
 echo "  /code-assistant  — start a supervised remote session"
 echo "  /notification    — alert user before risky actions"
 echo ""
-echo "Remote loop:"
-echo "  Claude finishes task → Telegram notification sent"
-echo "  You reply via Telegram → assistant daemon runs: claude --continue \"your message\""
-echo ""
-
-read -p "Press Enter to close..."
