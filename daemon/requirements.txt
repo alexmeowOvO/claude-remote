@@ -1,0 +1,5 @@
+# Required for the `usage` command (Chrome TLS impersonation to bypass Cloudflare)
+curl_cffi>=0.7.0
+
+# Required for Claude cookie decryption
+cryptography>=41.0.0

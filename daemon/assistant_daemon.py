@@ -16,6 +16,7 @@ Built-in commands (type exactly):
   run <shell cmd>     — run a shell command (requires secret if set)
   remind <text>       — add a reminder via AppleScript
   volume <0-100>      — set system volume
+  usage               — check Claude 5-hour limit and get notified on reset
   status              — show daemon uptime and stats
   help                — show available commands
 
@@ -33,6 +34,9 @@ import urllib.parse
 import tempfile
 import threading
 import shlex
+import sqlite3
+import base64
+from datetime import datetime, timezone
 
 # ── Configuration ──────────────────────────────────────────────────────────
 
@@ -194,6 +198,138 @@ def forward_to_claude(text):
     except Exception as e:
         send(f"❌ Claude Code error: {e}")
 
+# ── Claude usage helpers ───────────────────────────────────────────────────
+
+_CLAUDE_COOKIES_DB = os.path.expanduser(
+    "~/Library/Application Support/Claude/Cookies"
+)
+
+def _get_keychain_key():
+    """Read the Claude Safe Storage key from macOS Keychain."""
+    for service in ("Claude Safe Storage", "Electron Safe Storage"):
+        r = subprocess.run(
+            ["security", "find-generic-password", "-s", service, "-w"],
+            capture_output=True, text=True,
+        )
+        if r.returncode == 0:
+            return r.stdout.strip()
+    return None
+
+def _decrypt_electron_cookie(encrypted_value, keychain_password):
+    """
+    Decrypt a v10 Electron/Chrome cookie (macOS).
+    Format: b'v10' + 16-byte unknown + 16-byte IV + AES-128-CBC ciphertext
+    Key: PBKDF2-SHA1(password, salt='saltysalt', iterations=1003, length=16)
+    """
+    try:
+        from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
+        from cryptography.hazmat.primitives import hashes
+        from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+        from cryptography.hazmat.backends import default_backend
+    except ImportError:
+        return None
+
+    raw = bytes(encrypted_value)
+    if raw[:3] != b"v10" or len(raw) < 35:
+        return None
+
+    password = keychain_password.encode("utf-8")
+    kdf = PBKDF2HMAC(
+        algorithm=hashes.SHA1(), length=16, salt=b"saltysalt",
+        iterations=1003, backend=default_backend(),
+    )
+    key = kdf.derive(password)
+
+    iv = raw[19:35]
+    ciphertext = raw[35:]
+    cipher = Cipher(algorithms.AES(key), modes.CBC(iv), backend=default_backend())
+    dec = cipher.decryptor()
+    plaintext = dec.update(ciphertext) + dec.finalize()
+    pad = plaintext[-1]
+    return plaintext[:-pad].decode("utf-8", errors="replace")
+
+def _read_claude_cookies():
+    """Return a dict of decrypted Claude cookies, or {} on failure."""
+    password = _get_keychain_key()
+    if not password:
+        return {}
+    try:
+        import shutil
+        with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as tmp:
+            tmp_path = tmp.name
+        shutil.copy2(_CLAUDE_COOKIES_DB, tmp_path)
+        conn = sqlite3.connect(tmp_path)
+        rows = conn.execute(
+            "SELECT name, encrypted_value FROM cookies WHERE host_key LIKE '%claude%'"
+        ).fetchall()
+        conn.close()
+        os.remove(tmp_path)
+        return {
+            name: _decrypt_electron_cookie(ev, password)
+            for name, ev in rows
+            if _decrypt_electron_cookie(ev, password)
+        }
+    except Exception as e:
+        print(f"[cookie error] {e}")
+        return {}
+
+def _get_claude_usage():
+    """
+    Fetch the Claude 5-hour usage window from claude.ai.
+    Returns (resets_at: datetime | None, message: str).
+    Requires curl_cffi (pip install curl_cffi) for Chrome TLS impersonation.
+    """
+    try:
+        from curl_cffi import requests as cffi_requests
+    except ImportError:
+        return None, "curl_cffi not installed. Run: pip install curl_cffi"
+
+    cookies = _read_claude_cookies()
+    org_id = cookies.get("lastActiveOrg", "").strip()
+    if not org_id or not cookies.get("sessionKey"):
+        return None, "Could not read Claude session cookies."
+
+    try:
+        resp = cffi_requests.get(
+            f"https://claude.ai/api/organizations/{org_id}/usage",
+            cookies=cookies,
+            impersonate="chrome131",
+            timeout=10,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+    except Exception as e:
+        return None, f"API request failed: {e}"
+
+    five = data.get("five_hour")
+    if not five:
+        return None, "No five_hour usage data in API response."
+
+    utilization = five.get("utilization")
+    resets_at_str = five.get("resets_at")
+    pct = f"{round(utilization)}%" if utilization is not None else "unknown"
+
+    if resets_at_str:
+        resets_at = datetime.fromisoformat(resets_at_str.replace("Z", "+00:00"))
+        now = datetime.now(timezone.utc)
+        secs_left = max(0, int((resets_at - now).total_seconds()))
+        h, rem = divmod(secs_left, 3600)
+        m = rem // 60
+        time_str = f"{h}h {m}m" if h else f"{m}m"
+    else:
+        resets_at = None
+        time_str = "unknown"
+
+    return resets_at, f"⏳ 5-hour limit: {pct} used · resets in {time_str}"
+
+def _schedule_usage_notification(resets_at):
+    """Sleep until resets_at then send a Telegram notification."""
+    def _notify():
+        secs = max(0, (resets_at - datetime.now(timezone.utc)).total_seconds())
+        time.sleep(secs)
+        send("✅ 5-hour limit has reset — you're good to go!")
+    threading.Thread(target=_notify, daemon=True).start()
+
 # ── Command handlers ───────────────────────────────────────────────────────
 
 def handle(text):
@@ -210,12 +346,22 @@ def handle(text):
             (" (requires secret)" if SECRET else "") + "\n"
             "• `volume <0-100>` — set volume\n"
             "• `remind <text>` — add a reminder\n"
+            "• `usage` — check Claude 5-hour limit & get notified on reset\n"
             "• `status` — daemon uptime and stats\n"
             "• `help` — this message"
         )
         if CLAUDE_MODE:
             help_text += "\n\nAnything else → forwarded to Claude Code 🚀"
         send(help_text)
+
+    elif lower == "usage":
+        send("🔍 Checking Claude usage...")
+        resets_at, msg = _get_claude_usage()
+        if resets_at:
+            send(msg + "\n\n📬 I'll notify you when it resets.")
+            _schedule_usage_notification(resets_at)
+        else:
+            send(msg)
 
     elif lower == "status":
         uptime = time.time() - start_time
