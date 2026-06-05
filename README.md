@@ -74,9 +74,9 @@ Or double-click `daemon/start_assistant.command` to launch in a Terminal window.
 
 **To start automatically at login:**
 ```bash
-cp daemon/com.alex.assistant.plist ~/Library/LaunchAgents/
-launchctl load ~/Library/LaunchAgents/com.alex.assistant.plist
+bash daemon/launchd-install.sh
 ```
+This generates the plist using your actual repo path and loads the daemon via launchd.
 
 ## Telegram bot commands
 
@@ -85,7 +85,7 @@ launchctl load ~/Library/LaunchAgents/com.alex.assistant.plist
 | `screenshot` | Take a screenshot and send it back |
 | `open Safari` | Open an application |
 | `say hello world` | Speak text aloud (macOS TTS) |
-| `run <cmd>` | Run a shell command (requires secret if set) |
+| `run <cmd>` | Run a shell command (requires `ASSISTANT_SECRET` — disabled if unset) |
 | `volume 50` | Set system volume (0–100) |
 | `remind buy milk` | Add a reminder to Reminders.app |
 | `status` | Show daemon uptime and stats |
@@ -118,7 +118,7 @@ claude-remote/
 
 ## Architecture
 
-- **Zero dependencies** — Python stdlib only (`urllib`, `subprocess`, `threading`, `json`)
+- **Minimal dependencies** — core daemon is Python stdlib only; the optional `usage` command requires `curl_cffi` and `cryptography` (`pip install -r daemon/requirements.txt`)
 - **Long polling** via Telegram `getUpdates` API
 - **State persistence** — update offset saved to `.assistant_state.json` (gitignored)
 - **Threaded commands** — `run` executes in background threads, daemon stays responsive
@@ -126,7 +126,7 @@ claude-remote/
 ## Security
 
 - `config.sh` is gitignored — credentials never leave your machine
-- Shell commands require `ASSISTANT_SECRET` when set
+- `run` is **disabled entirely** when `ASSISTANT_SECRET` is unset — remote shell execution requires explicit opt-in
 - No `shell=True` — uses `shlex.split()` + subprocess list args throughout
 - AppleScript sent via stdin (no injection via `-e`)
 - Chat ID filtering — only your Telegram account controls the bot
