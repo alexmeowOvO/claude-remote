@@ -30,6 +30,7 @@ import time
 import os
 import sys
 import signal
+import logging
 import urllib.request
 import urllib.parse
 import tempfile
@@ -39,6 +40,19 @@ import sqlite3
 import base64
 from datetime import datetime, timezone
 
+# ── Logging ────────────────────────────────────────────────────────────────
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S",
+    handlers=[
+        logging.StreamHandler(sys.stdout),
+        logging.FileHandler("/tmp/assistant_daemon.log"),
+    ],
+)
+log = logging.getLogger("assistant")
+
 # ── Configuration ──────────────────────────────────────────────────────────
 
 TOKEN = os.environ.get("ASSISTANT_TOKEN", "").strip()
@@ -47,14 +61,14 @@ SECRET = os.environ.get("ASSISTANT_SECRET", "").strip()
 CLAUDE_MODE = os.environ.get("ASSISTANT_CLAUDE_MODE", "0").strip() == "1"
 
 if not TOKEN or not CHAT_ID_STR:
-    print("❌ ASSISTANT_TOKEN and ASSISTANT_CHAT_ID must be set.")
-    print("   Source daemon/config.sh or export them yourself.")
+    log.error("ASSISTANT_TOKEN and ASSISTANT_CHAT_ID must be set.")
+    log.error("Source config.sh or export them yourself.")
     sys.exit(1)
 
 try:
     CHAT_ID = int(CHAT_ID_STR)
 except ValueError:
-    print(f"❌ ASSISTANT_CHAT_ID must be an integer (got: {CHAT_ID_STR})")
+    log.error("ASSISTANT_CHAT_ID must be an integer (got: %s)", CHAT_ID_STR)
     sys.exit(1)
 
 API = f"https://api.telegram.org/bot{TOKEN}"
@@ -74,7 +88,7 @@ def save_state(state):
         with open(STATE_FILE, "w") as f:
             json.dump(state, f)
     except Exception as e:
-        print(f"[state save error] {e}")
+        log.warning("State save error: %s", e)
 
 # ── Telegram API helpers ───────────────────────────────────────────────────
 
@@ -99,7 +113,7 @@ def send(text):
             text = text[:max_body] + TRUNCATED_SUFFIX
         api_call("sendMessage", {"chat_id": CHAT_ID, "text": text})
     except Exception as e:
-        print(f"[send error] {e}")
+        log.error("Send error: %s", e)
 
 def send_photo(path):
     """Send a photo to Telegram via multipart upload."""
@@ -271,7 +285,7 @@ def _read_claude_cookies():
             if _decrypt_electron_cookie(ev, password)
         }
     except Exception as e:
-        print(f"[cookie error] {e}")
+        log.error("Cookie read error: %s", e)
         return {}
 
 def _get_claude_usage():
@@ -431,18 +445,19 @@ def handle(text):
 
     elif lower.startswith("remind "):
         reminder = text[7:].strip()
-        # Escape characters that would break AppleScript strings
-        safe = reminder.replace("\\", "\\\\").replace('"', '\\"')
-        script = (
-            'tell application "Reminders"\n'
-            f'    make new reminder with properties {{name:"{safe}"}}\n'
-            "end tell"
-        )
-        err = run_applescript(script)
-        if err == "(no output)":
-            send(f"🔔 Reminder added: {reminder}")
-        else:
-            send(f"❌ Reminder error: {err}")
+        # Pass reminder text as an AppleScript argument — no string interpolation
+        script = 'on run argv\ntell application "Reminders"\nmake new reminder with properties {name:item 1 of argv}\nend tell\nend run'
+        try:
+            result = subprocess.run(
+                ["osascript", "-e", script, reminder],
+                capture_output=True, text=True, timeout=15,
+            )
+            if result.returncode == 0:
+                send(f"🔔 Reminder added: {reminder}")
+            else:
+                send(f"❌ Reminder error: {(result.stdout + result.stderr).strip()}")
+        except Exception as e:
+            send(f"❌ Reminder error: {e}")
 
     else:
         forward_to_claude(text)
@@ -464,10 +479,10 @@ def main():
     state = load_state()
     offset = state.get("offset", 0)
 
-    print(f"🤖 assistant daemon starting...")
-    print(f"   Claude mode: {'on' if CLAUDE_MODE else 'off'}")
-    print(f"   Secret: {'required' if SECRET else 'disabled (⚠️  insecure)'}")
-    print(f"   State file: {STATE_FILE}")
+    log.info("assistant daemon starting...")
+    log.info("Claude mode: %s", "on" if CLAUDE_MODE else "off")
+    log.info("Secret: %s", "required" if SECRET else "disabled (insecure)")
+    log.info("State file: %s", STATE_FILE)
 
     # Send startup notification (survive failure gracefully)
     try:
@@ -477,7 +492,7 @@ def main():
             ("\nAnything else → Claude Code 🚀" if CLAUDE_MODE else "")
         )
     except Exception as e:
-        print(f"⚠️  Could not send startup message: {e}")
+        log.warning("Could not send startup message: %s", e)
 
     # If no saved offset, fast-forward past old messages
     if offset == 0:
@@ -488,11 +503,13 @@ def main():
         except Exception:
             pass
 
-    print(f"Listening for messages (offset={offset})...")
+    log.info("Listening for messages (offset=%d)...", offset)
 
+    error_backoff = 5  # seconds, doubles on repeated errors up to 60s
     while True:
         try:
             data = api_call("getUpdates", {"offset": offset, "timeout": 30})
+            error_backoff = 5  # reset on success
             for update in data.get("result", []):
                 msg = update.get("message", {})
                 chat_id = msg.get("chat", {}).get("id")
@@ -517,7 +534,7 @@ def main():
                     continue
 
                 stats["commands"] += 1
-                print(f"[{time.strftime('%H:%M:%S')}] Received: {text}")
+                log.info("Received: %s", text)
                 handle(text)
 
                 # Advance offset AFTER successful handle — prevents silent loss on crash
@@ -530,11 +547,12 @@ def main():
                 send("🔴 assistant daemon stopped.")
             except Exception:
                 pass
-            print("\nStopped.")
+            log.info("Stopped (KeyboardInterrupt).")
             sys.exit(0)
         except Exception as e:
-            print(f"[error] {e}")
-            time.sleep(5)
+            log.error("Poll error (retry in %ds): %s", error_backoff, e)
+            time.sleep(error_backoff)
+            error_backoff = min(error_backoff * 2, 60)  # exponential backoff, cap 60s
 
 def _shutdown(signum, frame):
     """Handle SIGTERM gracefully (sent by launchd on stop)."""
@@ -542,7 +560,7 @@ def _shutdown(signum, frame):
         send("🔴 assistant daemon stopped.")
     except Exception:
         pass
-    print("\nStopped (SIGTERM).")
+    log.info("Stopped (SIGTERM).")
     sys.exit(0)
 
 if __name__ == "__main__":
