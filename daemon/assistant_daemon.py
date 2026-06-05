@@ -411,6 +411,19 @@ _init_approval_dir(_ASK_RESULT_DIR)
 # assistant_ask.sh uses this to verify the daemon that owns the approval dir is running.
 _PID_FILE = os.path.join(_ASK_RESULT_DIR, "daemon.pid")
 
+# Heartbeat file — updated every poll cycle so assistant_ask.sh can detect PID reuse.
+# A crashed daemon will leave a stale heartbeat; a reused PID won't update it.
+_HEARTBEAT_FILE = os.path.join(_ASK_RESULT_DIR, "daemon.heartbeat")
+_HEARTBEAT_MAX_AGE = 60  # seconds
+
+def _update_heartbeat() -> None:
+    try:
+        fd = os.open(_HEARTBEAT_FILE, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, "w") as f:
+            f.write(str(time.time()))
+    except Exception:
+        pass
+
 def _ask_result_path(approval_id: str) -> str:
     return os.path.join(_ASK_RESULT_DIR, f"ask_{approval_id}")
 
@@ -628,6 +641,7 @@ def main():
     error_backoff = 5  # seconds, doubles on repeated errors up to 60s
     while True:
         try:
+            _update_heartbeat()
             data = api_call("getUpdates", {"offset": offset, "timeout": 30})
             error_backoff = 5  # reset on success
             for update in data.get("result", []):

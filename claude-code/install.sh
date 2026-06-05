@@ -80,15 +80,23 @@ STOP_HOOK_CMD="$HOOKS_DIR/stop_notify.sh"
 NOTIFY_HOOK_CMD="$HOOKS_DIR/notify_hook.sh"
 
 python3 - "$SETTINGS" "$STOP_HOOK_CMD" "$NOTIFY_HOOK_CMD" << 'PYEOF'
-import json, sys, os
+import json, sys, os, shutil, datetime
 
 settings_path, stop_cmd, notify_cmd = sys.argv[1], sys.argv[2], sys.argv[3]
 
-# Load existing settings or start fresh
+# Load existing settings or start fresh; back up and recover on malformed JSON
 if os.path.exists(settings_path):
-    with open(settings_path) as f:
-        settings = json.load(f)
-    print(f"   Merging into existing {settings_path}")
+    try:
+        with open(settings_path) as f:
+            settings = json.load(f)
+        print(f"   Merging into existing {settings_path}")
+    except json.JSONDecodeError as e:
+        ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        backup = f"{settings_path}.bak_{ts}"
+        shutil.copy2(settings_path, backup)
+        print(f"   ⚠️  {settings_path} is malformed ({e})")
+        print(f"   Backed up to {backup}, starting fresh.")
+        settings = {}
 else:
     settings = {}
     print(f"   Creating new {settings_path}")

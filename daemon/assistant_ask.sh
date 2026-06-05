@@ -22,35 +22,52 @@ API="https://api.telegram.org/bot${ASSISTANT_TOKEN}"
 # Private directory — world-writable /tmp is unsafe for approval sentinels
 APPROVAL_DIR="/tmp/claude-remote-${UID}"
 PID_FILE="${APPROVAL_DIR}/daemon.pid"
+HEARTBEAT_FILE="${APPROVAL_DIR}/daemon.heartbeat"
+HEARTBEAT_MAX_AGE=60  # seconds — must match daemon's _HEARTBEAT_MAX_AGE
 
-# Create directory if missing, then verify ownership and mode
+# If the directory already exists, verify ownership BEFORE attempting chmod.
+# If another user pre-created it, chmod would fail under set -e before
+# we can print a useful error message.
+if [ -d "$APPROVAL_DIR" ]; then
+  DIR_OWNER=$(python3 -c "import os; print(os.stat('$APPROVAL_DIR').st_uid)")
+  if [ "$DIR_OWNER" != "$(id -u)" ]; then
+    echo "[assistant_ask] ERROR: $APPROVAL_DIR is owned by UID $DIR_OWNER, expected $(id -u). Possible pre-creation attack. Aborting." >&2
+    exit 1
+  fi
+fi
+
+# Safe to create/fix now — we own any existing directory
 mkdir -p "$APPROVAL_DIR"
 chmod 0700 "$APPROVAL_DIR"
-
-# Verify ownership and mode — abort if another user pre-created the path
-DIR_OWNER=$(python3 -c "import os,stat; st=os.stat('$APPROVAL_DIR'); print(st.st_uid)")
-DIR_MODE=$(python3 -c "import os,stat; st=os.stat('$APPROVAL_DIR'); print(oct(stat.S_IMODE(st.st_mode)))")
-if [ "$DIR_OWNER" != "$(id -u)" ]; then
-  echo "[assistant_ask] ERROR: $APPROVAL_DIR is owned by UID $DIR_OWNER, expected $(id -u). Aborting." >&2
-  exit 1
-fi
-if [ "$DIR_MODE" != "0o700" ]; then
-  echo "[assistant_ask] ERROR: $APPROVAL_DIR has mode $DIR_MODE, expected 0o700. Fix with: chmod 700 $APPROVAL_DIR" >&2
-  exit 1
-fi
 
 # Generate unique approval ID
 APPROVAL_ID=$(python3 -c "import secrets; print(secrets.token_hex(3))")
 SENTINEL="${APPROVAL_DIR}/ask_${APPROVAL_ID}"
 RESULT_FILE="${SENTINEL}.result"
 
-# Check daemon is running via PID file — pgrep can match unrelated processes
+# Check daemon is running via PID file + heartbeat.
+# PID alone is insufficient — macOS can reuse PIDs after a crash.
+# The heartbeat file is updated every poll cycle; a stale one means the
+# process holding the PID is not our daemon.
 _daemon_running() {
   [ -f "$PID_FILE" ] || return 1
   local pid
   pid=$(cat "$PID_FILE" 2>/dev/null) || return 1
   [[ "$pid" =~ ^[0-9]+$ ]] || return 1
-  kill -0 "$pid" 2>/dev/null
+  kill -0 "$pid" 2>/dev/null || return 1
+
+  # Verify heartbeat is recent — guards against PID reuse after crash
+  [ -f "$HEARTBEAT_FILE" ] || return 1
+  local age
+  age=$(python3 -c "
+import time, sys
+try:
+    ts = float(open('$HEARTBEAT_FILE').read())
+    print(int(time.time() - ts))
+except Exception:
+    print(9999)
+")
+  [ "$age" -lt "$HEARTBEAT_MAX_AGE" ]
 }
 
 if ! _daemon_running; then
