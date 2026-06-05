@@ -73,7 +73,4 @@ else
   read -p "Press Enter to close..."
   exit 1
 fi
-echo ""
-echo "✅ Done! Your repo is live at $REPO_URL"
-echo ""
 read -p "Press Enter to close..."

@@ -54,6 +54,20 @@ for f in "$REPO"/daemon/*.plist.template; do
   rm -f "$tmp"
 done
 
+# Hook config drift (installed hooks only)
+echo "── Hook config ──"
+HOOK_CONFIG="$HOME/.claude/hooks/config.sh"
+if [ ! -f "$HOOK_CONFIG" ]; then
+  echo "  ⚠️  $HOOK_CONFIG not found — hooks will skip silently. Run bash claude-code/install.sh"
+else
+  # Check for placeholder values that indicate config was never filled in
+  if grep -q "YOUR_BOT_TOKEN_HERE\|YOUR_CHAT_ID_HERE" "$HOOK_CONFIG" 2>/dev/null; then
+    fail "Hook config has unfilled placeholders — edit $HOOK_CONFIG"
+  else
+    ok "Hook config present and filled in"
+  fi
+fi
+
 # Shellcheck (optional)
 echo "── Shellcheck (optional) ──"
 if command -v shellcheck &>/dev/null; then

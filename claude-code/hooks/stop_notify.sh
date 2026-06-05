@@ -13,7 +13,8 @@ TOKEN="${ASSISTANT_TOKEN:-}"
 CHAT_ID="${ASSISTANT_CHAT_ID:-}"
 
 if [ -z "$TOKEN" ] || [ -z "$CHAT_ID" ]; then
-  echo "[assistant] stop_notify: ASSISTANT_TOKEN or ASSISTANT_CHAT_ID not set — skipping notification" >&2
+  echo "[assistant] stop_notify: ASSISTANT_TOKEN or ASSISTANT_CHAT_ID not set." >&2
+  echo "   Fix: run bash claude-code/install.sh --sync-config from the claude-remote repo." >&2
   exit 0
 fi
 

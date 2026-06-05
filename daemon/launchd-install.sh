@@ -71,3 +71,4 @@ echo "⚠️  Daemon did not produce a heartbeat within ${MAX_WAIT}s."
 echo "   It may have exited immediately — check for missing config.sh or errors:"
 echo "   cat /tmp/assistant_daemon.log"
 echo "   cat /tmp/assistant_daemon.err"
+exit 1
