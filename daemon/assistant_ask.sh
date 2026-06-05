@@ -2,10 +2,14 @@
 # Usage: assistant_ask.sh "Question?" [timeout_seconds]
 # Returns 0 (yes) or 1 (no/timeout)
 #
-# Uses the daemon's unique-ID approval protocol: sends "YES <id>" / "NO <id>"
-# so replies cannot be confused with normal daemon commands.
-# If the daemon is running, it will consume the reply via _try_route_approval().
-# If used standalone (daemon not running), this script polls directly.
+# Approval flow (daemon is the ONLY Telegram consumer):
+#   1. Generate a unique ID and create a sentinel file the daemon recognises.
+#   2. Send the question via Telegram with YES <id> / NO <id> instructions.
+#   3. Poll the result file that the daemon writes when it routes the reply.
+#   4. Clean up sentinel and result files.
+#
+# The daemon's _try_route_approval() writes the result — no second poller,
+# no race condition.
 
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -15,28 +19,34 @@ QUESTION="$1"
 TIMEOUT="${2:-120}"
 API="https://api.telegram.org/bot${ASSISTANT_TOKEN}"
 
-# Generate a unique approval ID (6 hex chars)
+# Generate unique approval ID
 APPROVAL_ID=$(python3 -c "import secrets; print(secrets.token_hex(3))")
+SENTINEL="/tmp/assistant_ask_${APPROVAL_ID}"
+RESULT_FILE="${SENTINEL}.result"
 
-# Send the question with the unique ID embedded in the reply instructions
+# Create sentinel so daemon knows this ID belongs to a shell approval
+touch "$SENTINEL"
+trap 'rm -f "$SENTINEL" "$RESULT_FILE"' EXIT
+
+# Send the question
 curl -s -X POST "${API}/sendMessage" \
   -d "chat_id=${ASSISTANT_CHAT_ID}" \
   --data-urlencode "text=❓ ${QUESTION}
 
 Reply \`YES ${APPROVAL_ID}\` to approve or \`NO ${APPROVAL_ID}\` to cancel (${TIMEOUT}s timeout)." > /dev/null
 
-# Get current update_id offset (skip any pre-existing messages)
-LAST_ID=$(curl -s "${API}/getUpdates?limit=1&offset=-1" | python3 -c "
-import json, sys
-data = json.load(sys.stdin)
-if data['result']:
-    print(data['result'][-1]['update_id'] + 1)
-else:
-    print(0)
-")
-
+# Poll for the result file written by the daemon
 START=$(date +%s)
 while true; do
+  if [ -f "$RESULT_FILE" ]; then
+    ANSWER=$(cat "$RESULT_FILE")
+    if [ "$ANSWER" = "YES" ]; then
+      exit 0
+    else
+      exit 1
+    fi
+  fi
+
   NOW=$(date +%s)
   ELAPSED=$((NOW - START))
   if [ "$ELAPSED" -ge "$TIMEOUT" ]; then
@@ -46,45 +56,5 @@ while true; do
     exit 1
   fi
 
-  UPDATES=$(curl -s "${API}/getUpdates?offset=${LAST_ID}&timeout=10")
-
-  # Only accept "YES <id>" or "NO <id>" from the correct chat_id
-  REPLY=$(echo "$UPDATES" | python3 -c "
-import json, sys
-CHAT_ID = int('${ASSISTANT_CHAT_ID}')
-APPROVAL_ID = '${APPROVAL_ID}'
-data = json.load(sys.stdin)
-for u in data.get('result', []):
-    msg = u.get('message', {})
-    next_id = str(u['update_id'] + 1)
-    if msg.get('chat', {}).get('id') != CHAT_ID:
-        print(next_id + ':__skip__')
-        break
-    parts = msg.get('text', '').strip().split()
-    if len(parts) == 2 and parts[0].upper() in ('YES', 'NO') and parts[1].lower() == APPROVAL_ID:
-        print(next_id + ':' + parts[0].upper())
-        break
-    # Not our reply — skip past it
-    print(next_id + ':__skip__')
-    break
-" 2>/dev/null)
-
-  if [ -n "$REPLY" ]; then
-    LAST_ID="${REPLY%%:*}"
-    ANSWER="${REPLY#*:}"
-    if [ "$ANSWER" = "__skip__" ]; then
-      continue
-    fi
-    if [ "$ANSWER" = "YES" ]; then
-      curl -s -X POST "${API}/sendMessage" \
-        -d "chat_id=${ASSISTANT_CHAT_ID}" \
-        --data-urlencode "text=✅ Approved — proceeding." > /dev/null
-      exit 0
-    else
-      curl -s -X POST "${API}/sendMessage" \
-        -d "chat_id=${ASSISTANT_CHAT_ID}" \
-        --data-urlencode "text=❌ Denied — cancelled." > /dev/null
-      exit 1
-    fi
-  fi
+  sleep 2
 done

@@ -385,10 +385,20 @@ def _schedule_usage_notification(resets_at):
 
 # ── Command handlers ───────────────────────────────────────────────────────
 
+_ASK_RESULT_DIR = tempfile.gettempdir()
+
+def _ask_result_path(approval_id: str) -> str:
+    return os.path.join(_ASK_RESULT_DIR, f"assistant_ask_{approval_id}")
+
 def _try_route_approval(text: str) -> bool:
     """
     Check if text is a YES/NO <id> approval reply.
-    Returns True if it was consumed, False if it should be handled normally.
+
+    Handles two cases:
+    - In-process: daemon's ask() registered the ID in _pending_approvals → signal the event.
+    - Shell: assistant_ask.sh registered the ID via a sentinel file → write result to file.
+
+    Returns True if consumed, False if the ID is unknown (forward normally).
     """
     parts = text.strip().split()
     if len(parts) != 2:
@@ -396,15 +406,30 @@ def _try_route_approval(text: str) -> bool:
     verdict, approval_id = parts[0].upper(), parts[1].lower()
     if verdict not in ("YES", "NO"):
         return False
+
+    approved = (verdict == "YES")
+
+    # Case 1: in-process approval (daemon's ask() is waiting)
     with _approvals_lock:
         entry = _pending_approvals.get(approval_id)
-    if not entry:
-        return False  # unknown ID — let normal handling deal with it
-    event, result = entry
-    result["approved"] = (verdict == "YES")
-    event.set()
-    send("✅ Approved." if result["approved"] else "❌ Denied — cancelled.")
-    return True
+    if entry:
+        event, result = entry
+        result["approved"] = approved
+        event.set()
+        send("✅ Approved." if approved else "❌ Denied — cancelled.")
+        return True
+
+    # Case 2: shell approval (assistant_ask.sh created a sentinel file)
+    sentinel = _ask_result_path(approval_id)
+    if os.path.exists(sentinel):
+        result_file = sentinel + ".result"
+        with open(result_file, "w") as f:
+            f.write("YES" if approved else "NO")
+        send("✅ Approved." if approved else "❌ Denied — cancelled.")
+        return True
+
+    # Unknown ID — don't consume, let normal handling deal with it
+    return False
 
 def handle(text):
     text = text.strip()
